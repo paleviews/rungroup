@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"sync"
 )
 
 type GoFunc func(context.Context)
@@ -12,17 +11,11 @@ type GoFunc func(context.Context)
 type Group interface {
 	// Go tries to add f to the Group and then run f in a separated goroutine immediately.
 	// It returns a bool to indicate whether the try succeeded.
-	// See Finalize for more information about why Go returns false.
 	Go(f GoFunc) bool
-	// Finalize sets the Group to finalized state, which means the Group no longer accepts new members.
-	// Calling Go on a finalized RunGroup does nothing and returns false.
-	// Finalize may be called by multiple goroutines simultaneously.
-	// After the first call, subsequent calls of Finalize do nothing.
-	Finalize()
-	// Wait blocks until all functions in the Group exit.
+	// Wait waits for all goroutines in the Group to exit.
 	Wait()
-	// Close finalizes the RunGroup and cancels the context.
-	// Thus sending exit signals to all functions in the Group, but Close does not wait for them to exit.
+	// Close cancels the context.
+	// Thus sending exit signals to all goroutines in the Group, but Close does not wait for them to exit.
 	Close()
 }
 
@@ -52,9 +45,9 @@ func New(ctx context.Context, options ...Option) Group {
 	}
 	newCtx, cancel := context.WithCancel(ctx)
 	bg := &basicGroup{
-		ctx:    newCtx,
-		cancel: cancel,
-		final:  make(chan struct{}),
+		ctx:       newCtx,
+		cancel:    cancel,
+		waitGroup: newWaitGroup(),
 	}
 	var runGroup Group = bg
 	if cfg.panicHandler != nil {
@@ -77,46 +70,27 @@ var _ Group = (*basicGroup)(nil)
 type basicGroup struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	waitGroup sync.WaitGroup
-	final     chan struct{}
-	finalLock sync.RWMutex
+	waitGroup *waitGroup
 }
 
 func (g *basicGroup) Go(f GoFunc) bool {
-	g.finalLock.RLock()
-	defer g.finalLock.RUnlock()
-	select {
-	case <-g.final:
+	if !g.waitGroup.add(1) {
 		return false
-	default:
-		if f != nil {
-			g.waitGroup.Add(1)
-			go func() {
-				defer g.waitGroup.Done()
-				f(g.ctx)
-			}()
-		}
-		return true
 	}
-}
-
-func (g *basicGroup) Finalize() {
-	g.finalLock.Lock()
-	defer g.finalLock.Unlock()
-	select {
-	case <-g.final:
-	default:
-		close(g.final)
+	if f != nil {
+		go func() {
+			defer g.waitGroup.done()
+			f(g.ctx)
+		}()
 	}
+	return true
 }
 
 func (g *basicGroup) Wait() {
-	<-g.final
-	g.waitGroup.Wait()
+	g.waitGroup.wait()
 }
 
 func (g *basicGroup) Close() {
-	g.Finalize()
 	g.cancel()
 }
 
