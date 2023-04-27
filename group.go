@@ -7,37 +7,27 @@ import (
 	"sync"
 )
 
-type (
-	GoFunc       func(context.Context)
-	DeferFunc    func()
-	PanicHandler func(recovered interface{})
-)
+type GoFunc func(context.Context)
 
-type RunGroup interface {
-	// Go tries to add f to the 'go' group and then run f in a separated goroutine immediately.
+type Group interface {
+	// Go tries to add f to the Group and then run f in a separated goroutine immediately.
 	// It returns a bool to indicate whether the try succeeded.
-	// Refer to the Finalize comments for more information about why Go returns false.
+	// See Finalize for more information about why Go returns false.
 	Go(f GoFunc) bool
-	// Defer tries to add f to the 'defer' group and then arrange f to be run
-	// after the RunGroup finalized and all functions in the 'go' group finished.
-	// It returns a bool to indicate whether the try succeeded.
-	// Refer to the Finalize comments for more information about why Defer returns false.
-	// Functions in 'defer' group will not be run sequentially.
-	Defer(f DeferFunc) bool
-	// Finalize sets the RunGroup to finalized state, which means the RunGroup no longer accepts new members.
-	// Calling Go or Defer on a finalized RunGroup does nothing and returns false.
+	// Finalize sets the Group to finalized state, which means the Group no longer accepts new members.
+	// Calling Go on a finalized RunGroup does nothing and returns false.
 	// Finalize may be called by multiple goroutines simultaneously.
 	// After the first call, subsequent calls of Finalize do nothing.
 	Finalize()
-	// Wait blocks util all functions in both 'go' group and 'defer' group exit.
+	// Wait blocks until all functions in the Group exit.
 	Wait()
-	// Close finalizes the RunGroup and closes the context's Done channel.
-	// Thus sending exit signals to all functions in the 'go' group, but Close does not wait for them to exit.
+	// Close finalizes the RunGroup and cancels the context.
+	// Thus sending exit signals to all functions in the Group, but Close does not wait for them to exit.
 	Close()
 }
 
 type config struct {
-	panicHandler PanicHandler
+	panicHandler func(recovered interface{})
 	trapSignals  []os.Signal
 }
 
@@ -49,13 +39,13 @@ func WithTrapSignals(signals []os.Signal) Option {
 	}
 }
 
-func WithPanicHandler(f PanicHandler) Option {
+func WithPanicHandler(f func(recovered interface{})) Option {
 	return func(c *config) {
 		c.panicHandler = f
 	}
 }
 
-func New(ctx context.Context, options ...Option) RunGroup {
+func New(ctx context.Context, options ...Option) Group {
 	var cfg config
 	for _, opt := range options {
 		opt(&cfg)
@@ -66,7 +56,7 @@ func New(ctx context.Context, options ...Option) RunGroup {
 		cancel: cancel,
 		final:  make(chan struct{}),
 	}
-	var runGroup RunGroup = bg
+	var runGroup Group = bg
 	if cfg.panicHandler != nil {
 		runGroup = &groupWithPanicHandler{
 			basicGroup:   bg,
@@ -75,14 +65,14 @@ func New(ctx context.Context, options ...Option) RunGroup {
 	}
 	if len(cfg.trapSignals) > 0 {
 		runGroup = &groupWithTrapSignals{
-			RunGroup: runGroup,
-			signals:  cfg.trapSignals,
+			Group:   runGroup,
+			signals: cfg.trapSignals,
 		}
 	}
 	return runGroup
 }
 
-var _ RunGroup = (*basicGroup)(nil)
+var _ Group = (*basicGroup)(nil)
 
 type basicGroup struct {
 	ctx       context.Context
@@ -90,7 +80,6 @@ type basicGroup struct {
 	waitGroup sync.WaitGroup
 	final     chan struct{}
 	finalLock sync.RWMutex
-	deferList []DeferFunc
 }
 
 func (g *basicGroup) Go(f GoFunc) bool {
@@ -111,20 +100,6 @@ func (g *basicGroup) Go(f GoFunc) bool {
 	}
 }
 
-func (g *basicGroup) Defer(f DeferFunc) bool {
-	g.finalLock.RLock()
-	defer g.finalLock.RUnlock()
-	select {
-	case <-g.final:
-		return false
-	default:
-		if f != nil {
-			g.deferList = append(g.deferList, f)
-		}
-		return true
-	}
-}
-
 func (g *basicGroup) Finalize() {
 	g.finalLock.Lock()
 	defer g.finalLock.Unlock()
@@ -138,18 +113,6 @@ func (g *basicGroup) Finalize() {
 func (g *basicGroup) Wait() {
 	<-g.final
 	g.waitGroup.Wait()
-	if len(g.deferList) == 0 {
-		return
-	}
-	g.waitGroup.Add(len(g.deferList))
-	for _, f := range g.deferList {
-		f := f
-		go func() {
-			defer g.waitGroup.Done()
-			f()
-		}()
-	}
-	g.waitGroup.Wait()
 }
 
 func (g *basicGroup) Close() {
@@ -157,11 +120,11 @@ func (g *basicGroup) Close() {
 	g.cancel()
 }
 
-var _ RunGroup = (*groupWithPanicHandler)(nil)
+var _ Group = (*groupWithPanicHandler)(nil)
 
 type groupWithPanicHandler struct {
 	*basicGroup
-	panicHandler PanicHandler
+	panicHandler func(recovered interface{})
 }
 
 func (g *groupWithPanicHandler) Go(f GoFunc) bool {
@@ -178,24 +141,10 @@ func (g *groupWithPanicHandler) Go(f GoFunc) bool {
 	})
 }
 
-func (g *groupWithPanicHandler) Defer(f DeferFunc) bool {
-	if f == nil {
-		return g.basicGroup.Defer(nil)
-	}
-	return g.basicGroup.Defer(func() {
-		defer func() {
-			if r := recover(); r != nil {
-				g.panicHandler(r)
-			}
-		}()
-		f()
-	})
-}
-
-var _ RunGroup = (*groupWithTrapSignals)(nil)
+var _ Group = (*groupWithTrapSignals)(nil)
 
 type groupWithTrapSignals struct {
-	RunGroup
+	Group
 	signals []os.Signal
 }
 
@@ -216,12 +165,12 @@ func (g *groupWithTrapSignals) Wait() {
 		defer func() {
 			close(waitChan)
 		}()
-		g.RunGroup.Wait()
+		g.Group.Wait()
 	}()
 	select {
 	case <-waitChan:
 	case <-sigChan:
-		g.RunGroup.Close()
+		g.Group.Close()
 		<-waitChan
 	}
 }
