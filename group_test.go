@@ -55,14 +55,14 @@ func newTestCase(args testcaseArgs, osSignalSendSimulate func()) *testcase {
 		group          Group
 		ctx, ctxCancel = context.WithCancel(context.Background())
 		cancel         func()
-		counter        atomic.Int64
+		counter        int64
 		times          int64 = 1
 	)
 	{
 		var options []Option
 		if args.withPanicHandler {
 			options = append(options, WithPanicHandler(func(interface{}) {
-				counter.Add(1)
+				atomic.AddInt64(&counter, 1)
 			}))
 		}
 		if args.withTrapSignals {
@@ -74,29 +74,29 @@ func newTestCase(args testcaseArgs, osSignalSendSimulate func()) *testcase {
 	switch args.exitOn {
 	case exitOnFunctionReturn:
 		repeatGo(group, func(context.Context) {
-			counter.Add(1)
+			atomic.AddInt64(&counter, 1)
 		}, num)
 	case exitOnContextSignal:
 		repeatGo(group, func(ctx context.Context) {
-			counter.Add(1)
+			atomic.AddInt64(&counter, 1)
 			<-ctx.Done()
 		}, num)
 		cancel = ctxCancel
 	case exitOnGroupCancel:
 		repeatGo(group, func(ctx context.Context) {
-			counter.Add(1)
+			atomic.AddInt64(&counter, 1)
 			<-ctx.Done()
 		}, num)
 		cancel = group.Close
 	case exitOnPanic:
 		repeatGo(group, func(context.Context) {
-			counter.Add(1)
+			atomic.AddInt64(&counter, 1)
 			panic("oops")
 		}, num)
 		times++
 	case exitOnOSSignal:
 		repeatGo(group, func(ctx context.Context) {
-			counter.Add(1)
+			atomic.AddInt64(&counter, 1)
 			<-ctx.Done()
 		}, num)
 		cancel = func() {
@@ -105,7 +105,7 @@ func newTestCase(args testcaseArgs, osSignalSendSimulate func()) *testcase {
 	}
 
 	assert := func() bool {
-		return counter.Load() == times*num
+		return atomic.LoadInt64(&counter) == times*num
 	}
 	group.Finalize()
 
@@ -131,7 +131,7 @@ func osSignalFake() (
 	)
 	go func() {
 		for s := range sourceChannel {
-			targetChannels.Range(func(c, _ any) bool {
+			targetChannels.Range(func(c, _ interface{}) bool {
 				cc := c.(chan<- os.Signal)
 				select {
 				case cc <- s:
