@@ -6,9 +6,10 @@ import (
 )
 
 type waitGroup struct {
-	sem    int64
-	mu     sync.Mutex
-	signal chan struct{}
+	mu       sync.Mutex
+	sem      int64
+	canceled bool
+	signal   chan struct{}
 }
 
 func newWaitGroup() *waitGroup {
@@ -20,10 +21,8 @@ func newWaitGroup() *waitGroup {
 func (wg *waitGroup) add(delta uint32) bool {
 	wg.mu.Lock()
 	defer wg.mu.Unlock()
-	select {
-	case <-wg.signal:
+	if wg.canceled {
 		return false
-	default:
 	}
 	wg.sem += int64(delta)
 	return true
@@ -44,6 +43,12 @@ func (wg *waitGroup) done() {
 	if wg.sem == 0 {
 		close(wg.signal)
 	}
+}
+
+func (wg *waitGroup) cancel() {
+	wg.mu.Lock()
+	defer wg.mu.Unlock()
+	wg.canceled = true
 }
 
 func (wg *waitGroup) wait() {

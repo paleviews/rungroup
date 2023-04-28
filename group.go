@@ -12,11 +12,12 @@ type Group interface {
 	// Go tries to add f to the Group and then run f in a separated goroutine immediately.
 	// It returns a bool to indicate whether the try succeeded.
 	Go(f GoFunc) bool
+	// Cancel cancels the context.
+	// Thus sending exit signals to all goroutines in the Group,
+	// but does not wait for them to exit.
+	Cancel()
 	// Wait waits for all goroutines in the Group to exit.
 	Wait()
-	// Close cancels the context.
-	// Thus sending exit signals to all goroutines in the Group, but Close does not wait for them to exit.
-	Close()
 }
 
 type config struct {
@@ -44,15 +45,14 @@ func New(ctx context.Context, options ...Option) Group {
 		opt(&cfg)
 	}
 	newCtx, cancel := context.WithCancel(ctx)
-	bg := &basicGroup{
+	var runGroup Group = &basicGroup{
 		ctx:       newCtx,
 		cancel:    cancel,
 		waitGroup: newWaitGroup(),
 	}
-	var runGroup Group = bg
 	if cfg.panicHandler != nil {
 		runGroup = &groupWithPanicHandler{
-			basicGroup:   bg,
+			Group:        runGroup,
 			panicHandler: cfg.panicHandler,
 		}
 	}
@@ -90,22 +90,23 @@ func (g *basicGroup) Wait() {
 	g.waitGroup.wait()
 }
 
-func (g *basicGroup) Close() {
+func (g *basicGroup) Cancel() {
+	g.waitGroup.cancel()
 	g.cancel()
 }
 
 var _ Group = (*groupWithPanicHandler)(nil)
 
 type groupWithPanicHandler struct {
-	*basicGroup
+	Group
 	panicHandler func(recovered interface{})
 }
 
 func (g *groupWithPanicHandler) Go(f GoFunc) bool {
 	if f == nil {
-		return g.basicGroup.Go(nil)
+		return g.Group.Go(nil)
 	}
-	return g.basicGroup.Go(func(ctx context.Context) {
+	return g.Group.Go(func(ctx context.Context) {
 		defer func() {
 			if r := recover(); r != nil {
 				g.panicHandler(r)
@@ -144,7 +145,7 @@ func (g *groupWithTrapSignals) Wait() {
 	select {
 	case <-waitChan:
 	case <-sigChan:
-		g.Group.Close()
+		g.Group.Cancel()
 		<-waitChan
 	}
 }

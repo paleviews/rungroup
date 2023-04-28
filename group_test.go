@@ -87,7 +87,7 @@ func newTestCase(args testcaseArgs, osSignalSendSimulate func()) *testcase {
 			atomic.AddInt64(&counter, 1)
 			<-ctx.Done()
 		}, num)
-		cancel = group.Close
+		cancel = group.Cancel
 	case exitOnPanic:
 		repeatGo(group, func(context.Context) {
 			atomic.AddInt64(&counter, 1)
