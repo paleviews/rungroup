@@ -74,15 +74,16 @@ type basicGroup struct {
 }
 
 func (g *basicGroup) Go(f GoFunc) bool {
+	if f == nil {
+		return g.waitGroup.add(0)
+	}
 	if !g.waitGroup.add(1) {
 		return false
 	}
-	if f != nil {
-		go func() {
-			defer g.waitGroup.done()
-			f(g.ctx)
-		}()
-	}
+	go func() {
+		defer g.waitGroup.done()
+		f(g.ctx)
+	}()
 	return true
 }
 

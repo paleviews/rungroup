@@ -103,6 +103,7 @@ func newTestCase(args testcaseArgs, osSignalSendSimulate func()) *testcase {
 			osSignalSendSimulate()
 		}
 	}
+	group.Go(nil)
 
 	assert := func() bool {
 		return atomic.LoadInt64(&counter) == times*num
