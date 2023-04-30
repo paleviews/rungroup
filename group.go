@@ -37,6 +37,8 @@ type Group interface {
 	Go(f GoFunc) bool
 	// Cancel cancels the underlying context, effectively sending exit signals
 	// to all goroutines in the Group, but does not wait for them to exit.
+	// After Cancel is called, the Group no longer accepts new goroutines
+	// (i.e. Go always returns false from that point forward).
 	// Cancel may be called by multiple goroutines simultaneously.
 	// After the first call, subsequent calls to a CancelFunc do nothing.
 	Cancel()
