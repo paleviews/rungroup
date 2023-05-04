@@ -122,6 +122,7 @@ func (g *basicGroup) Go(f GoFunc) bool {
 
 func (g *basicGroup) Wait() {
 	g.waitGroup.wait()
+	g.cancel()
 }
 
 func (g *basicGroup) Cancel() {
