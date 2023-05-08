@@ -29,7 +29,7 @@ type GoFunc func(context.Context)
 // uncalled, the Group will advance from an active state to a closed state,
 // bypassing the canceled phase.
 type Group interface {
-	// Go attempts call function f in a new goroutine and add f to the Group.
+	// Go attempts to call function f in a new goroutine and add f to the Group.
 	// It returns a boolean to indicate whether the attempt was successful.
 	// The context provided to f as a function argument will be canceled
 	// (i.e. the Done channel of the context will be closed) once the Cancel
@@ -40,7 +40,7 @@ type Group interface {
 	// After Cancel is called, the Group no longer accepts new goroutines
 	// (i.e. Go always returns false from that point forward).
 	// Cancel may be called by multiple goroutines simultaneously.
-	// After the first call, subsequent calls to a CancelFunc do nothing.
+	// After the first call, subsequent calls to a Cancel do nothing.
 	Cancel()
 	// Wait blocks until all goroutines in the Group have exited.
 	Wait()
